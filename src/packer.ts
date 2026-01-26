@@ -152,7 +152,7 @@ export class MaxRectsPacker {
 
   /**
    * Remove redundant free rectangles that are fully contained within others
-   * Optimized version using a single pass with early exit
+   * Optimized to skip already-marked rectangles and use Set for O(1) lookup
    */
   private pruneFreeRectangles(): void {
     const n = this.freeRectangles.length;
