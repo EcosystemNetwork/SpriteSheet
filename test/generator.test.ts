@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
 import sharp from 'sharp';
 import { generateSpriteSheet, loadImages } from '../src/generator.js';
+import { nextPowerOfTwo } from '../src/packer.js';
 import type { Sprite } from '../src/types.js';
 
-const TEST_DIR = '/tmp/spritesheet-test';
+const TEST_DIR = path.join(os.tmpdir(), 'spritesheet-test');
 const TEST_IMAGES_DIR = path.join(TEST_DIR, 'images');
 
 // Helper to create test images
@@ -122,10 +124,9 @@ describe('Generator', () => {
       const sprites = await loadImages([path.join(TEST_IMAGES_DIR, '*.png')]);
       const result = await generateSpriteSheet(sprites, { powerOfTwo: true });
 
-      // Check dimensions are powers of two
-      const isPowerOfTwo = (n: number) => n > 0 && (n & (n - 1)) === 0;
-      expect(isPowerOfTwo(result.width)).toBe(true);
-      expect(isPowerOfTwo(result.height)).toBe(true);
+      // Check dimensions are powers of two using imported utility
+      expect(nextPowerOfTwo(result.width)).toBe(result.width);
+      expect(nextPowerOfTwo(result.height)).toBe(result.height);
     });
 
     it('should handle custom Sprite objects', async () => {

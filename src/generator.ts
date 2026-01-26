@@ -207,8 +207,9 @@ export async function generateSpriteSheet(
 
   // Generate metadata
   const frames: Record<string, SpriteFrame> = {};
+  const originalSpriteMap = new Map(sprites.map((s) => [s.name, s]));
   for (const sprite of packedSprites) {
-    const originalSprite = sprites.find((s) => s.name === sprite.name);
+    const originalSprite = originalSpriteMap.get(sprite.name);
     frames[sprite.name] = {
       frame: {
         x: sprite.x,
