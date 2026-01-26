@@ -145,7 +145,7 @@ async function generateSpriteSheet(
       break;
     case 'png':
     default:
-      outputBuffer = await sheetImage.png().toBuffer();
+      outputBuffer = await sheetImage.png({ compressionLevel: 9 }).toBuffer();
       break;
   }
 

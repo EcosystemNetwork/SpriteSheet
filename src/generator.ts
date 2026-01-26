@@ -190,7 +190,7 @@ export async function generateSpriteSheet(
     },
   }).composite(composites);
 
-  // Apply output format
+  // Apply output format with optimized compression settings
   let outputBuffer: Buffer;
   switch (cfg.format) {
     case 'jpeg':
@@ -201,7 +201,7 @@ export async function generateSpriteSheet(
       break;
     case 'png':
     default:
-      outputBuffer = await sheetImage.png().toBuffer();
+      outputBuffer = await sheetImage.png({ compressionLevel: 9 }).toBuffer();
       break;
   }
 

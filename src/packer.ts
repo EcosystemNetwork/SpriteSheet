@@ -152,26 +152,32 @@ export class MaxRectsPacker {
 
   /**
    * Remove redundant free rectangles that are fully contained within others
+   * Optimized version using a single pass with early exit
    */
   private pruneFreeRectangles(): void {
-    const pruned: FreeRectangle[] = [];
+    const n = this.freeRectangles.length;
+    const toRemove = new Set<number>();
 
-    for (let i = 0; i < this.freeRectangles.length; i++) {
-      let isContained = false;
-
-      for (let j = 0; j < this.freeRectangles.length; j++) {
-        if (i !== j && this.isContained(this.freeRectangles[i], this.freeRectangles[j])) {
-          isContained = true;
+    for (let i = 0; i < n; i++) {
+      if (toRemove.has(i)) continue;
+      
+      for (let j = i + 1; j < n; j++) {
+        if (toRemove.has(j)) continue;
+        
+        const iContainedInJ = this.isContained(this.freeRectangles[i], this.freeRectangles[j]);
+        const jContainedInI = this.isContained(this.freeRectangles[j], this.freeRectangles[i]);
+        
+        if (iContainedInJ) {
+          toRemove.add(i);
           break;
         }
-      }
-
-      if (!isContained) {
-        pruned.push(this.freeRectangles[i]);
+        if (jContainedInI) {
+          toRemove.add(j);
+        }
       }
     }
 
-    this.freeRectangles = pruned;
+    this.freeRectangles = this.freeRectangles.filter((_, index) => !toRemove.has(index));
   }
 
   /**
