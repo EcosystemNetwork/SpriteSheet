@@ -286,7 +286,7 @@ export async function generateSpriteSheetFromFiles(
 
   // Write files
   await Promise.all([
-    fs.writeFile(imagePath, result.image),
+    fs.writeFile(imagePath, new Uint8Array(result.image)),
     fs.writeFile(jsonPath, JSON.stringify(result.metadata, null, 2)),
   ]);
 
