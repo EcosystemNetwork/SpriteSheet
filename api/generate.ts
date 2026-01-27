@@ -1,16 +1,7 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import sharp from 'sharp';
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import { glob } from 'glob';
-import { packRectangles } from './packer.js';
-import type {
-  Sprite,
-  PackedSprite,
-  SpriteSheetConfig,
-  SpriteSheetResult,
-  SpriteSheetMetadata,
-  SpriteFrame,
-} from './types.js';
+import { packRectangles } from '../src/packer.js';
+import type { SpriteSheetConfig, SpriteSheetMetadata, SpriteFrame, Sprite, PackedSprite } from '../src/types.js';
 
 const DEFAULT_CONFIG: Required<SpriteSheetConfig> = {
   padding: 1,
@@ -23,94 +14,54 @@ const DEFAULT_CONFIG: Required<SpriteSheetConfig> = {
   sort: true,
 };
 
-/**
- * Load a single image file and return sprite data
- */
-export async function loadImage(filePath: string): Promise<Sprite> {
-  const data = await fs.readFile(filePath);
-  const metadata = await sharp(data).metadata();
+interface SpriteInput {
+  name: string;
+  data: string; // base64 encoded image data
+}
+
+async function processSprite(input: SpriteInput): Promise<Sprite> {
+  const buffer = Buffer.from(input.data, 'base64');
+  const metadata = await sharp(buffer).metadata();
 
   if (!metadata.width || !metadata.height) {
-    throw new Error(`Could not read dimensions of image: ${filePath}`);
+    throw new Error(`Could not read dimensions of image: ${input.name}`);
   }
 
-  const name = path.basename(filePath, path.extname(filePath));
-
   return {
-    name,
+    name: input.name,
     width: metadata.width,
     height: metadata.height,
-    data,
-    path: filePath,
+    data: buffer,
   };
 }
 
-/**
- * Load multiple images from files or glob patterns
- */
-export async function loadImages(patterns: string[]): Promise<Sprite[]> {
-  const sprites: Sprite[] = [];
-  const seenNames = new Set<string>();
-
-  for (const pattern of patterns) {
-    const files = await glob(pattern, { nodir: true });
-
-    for (const file of files) {
-      const sprite = await loadImage(file);
-
-      // Ensure unique names
-      let uniqueName = sprite.name;
-      let counter = 1;
-      while (seenNames.has(uniqueName)) {
-        uniqueName = `${sprite.name}_${counter}`;
-        counter++;
-      }
-      seenNames.add(uniqueName);
-      sprite.name = uniqueName;
-
-      sprites.push(sprite);
-    }
-  }
-
-  return sprites;
-}
-
-/**
- * Trim transparent pixels from a sprite
- */
-export async function trimSprite(sprite: Sprite): Promise<Sprite> {
-  const image = sharp(sprite.data);
-  const trimmed = await image.trim().toBuffer();
-  const metadata = await sharp(trimmed).metadata();
-
-  return {
-    ...sprite,
-    data: trimmed,
-    width: metadata.width ?? sprite.width,
-    height: metadata.height ?? sprite.height,
-  };
-}
-
-/**
- * Generate a sprite sheet from an array of sprites
- */
-export async function generateSpriteSheet(
+async function generateSpriteSheet(
   sprites: Sprite[],
   config: SpriteSheetConfig = {}
-): Promise<SpriteSheetResult> {
+): Promise<{ image: Buffer; metadata: SpriteSheetMetadata; width: number; height: number }> {
   const cfg: Required<SpriteSheetConfig> = { ...DEFAULT_CONFIG, ...config };
 
   if (sprites.length === 0) {
     throw new Error('No sprites provided');
   }
 
-  // Optionally trim sprites
   let processedSprites = sprites;
   if (cfg.trim) {
-    processedSprites = await Promise.all(sprites.map(trimSprite));
+    processedSprites = await Promise.all(
+      sprites.map(async (sprite) => {
+        const image = sharp(sprite.data);
+        const trimmed = await image.trim().toBuffer();
+        const metadata = await sharp(trimmed).metadata();
+        return {
+          ...sprite,
+          data: trimmed,
+          width: metadata.width ?? sprite.width,
+          height: metadata.height ?? sprite.height,
+        };
+      })
+    );
   }
 
-  // Sort sprites by area (largest first) for better packing
   const indexedSprites = processedSprites.map((sprite, index) => ({
     sprite,
     index,
@@ -123,14 +74,12 @@ export async function generateSpriteSheet(
     );
   }
 
-  // Prepare rectangles for packing
   const rectangles = indexedSprites.map((item) => ({
     width: item.sprite.width,
     height: item.sprite.height,
     index: item.index,
   }));
 
-  // Pack the rectangles
   const packResult = packRectangles(
     rectangles,
     cfg.maxWidth,
@@ -145,7 +94,6 @@ export async function generateSpriteSheet(
     );
   }
 
-  // Create packed sprites with positions
   const packedSprites: PackedSprite[] = packResult.packed.map((packed) => {
     const sprite = processedSprites[packed.index];
     return {
@@ -155,14 +103,11 @@ export async function generateSpriteSheet(
     };
   });
 
-  // Create the sprite sheet image
   const sheetWidth = packResult.width;
   const sheetHeight = packResult.height;
 
-  // Start with a transparent background
   const composites = await Promise.all(
     packedSprites.map(async (sprite) => {
-      // Ensure the image is in RGBA format
       const buffer = await sharp(sprite.data)
         .ensureAlpha()
         .raw()
@@ -181,7 +126,7 @@ export async function generateSpriteSheet(
     })
   );
 
-  let sheetImage = sharp({
+  const sheetImage = sharp({
     create: {
       width: sheetWidth,
       height: sheetHeight,
@@ -190,7 +135,6 @@ export async function generateSpriteSheet(
     },
   }).composite(composites);
 
-  // Apply output format with optimized compression settings
   let outputBuffer: Buffer;
   switch (cfg.format) {
     case 'jpeg':
@@ -205,7 +149,6 @@ export async function generateSpriteSheet(
       break;
   }
 
-  // Generate metadata
   const frames: Record<string, SpriteFrame> = {};
   const originalSpriteMap = new Map(sprites.map((s) => [s.name, s]));
   for (const sprite of packedSprites) {
@@ -255,40 +198,51 @@ export async function generateSpriteSheet(
   };
 }
 
-/**
- * Generate a sprite sheet from file paths/patterns and save to disk
- */
-export async function generateSpriteSheetFromFiles(
-  patterns: string[],
-  outputPath: string,
-  config: SpriteSheetConfig = {}
-): Promise<SpriteSheetResult> {
-  const sprites = await loadImages(patterns);
-
-  if (sprites.length === 0) {
-    throw new Error('No images found matching the provided patterns');
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Only allow POST requests
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
 
-  const result = await generateSpriteSheet(sprites, config);
+  try {
+    const { sprites, config } = req.body as {
+      sprites: SpriteInput[];
+      config?: SpriteSheetConfig;
+    };
 
-  // Determine output paths
-  const outputDir = path.dirname(outputPath);
-  const baseName = path.basename(outputPath, path.extname(outputPath));
-  const cfg = { ...DEFAULT_CONFIG, ...config };
-  const imagePath = path.join(outputDir, `${baseName}.${cfg.format}`);
-  const jsonPath = path.join(outputDir, `${baseName}.json`);
+    if (!sprites || !Array.isArray(sprites) || sprites.length === 0) {
+      return res.status(400).json({
+        error: 'Missing or invalid sprites array. Provide an array of {name, data} objects where data is base64 encoded.',
+      });
+    }
 
-  // Ensure output directory exists
-  await fs.mkdir(outputDir, { recursive: true });
+    // Validate sprite inputs
+    for (const sprite of sprites) {
+      if (!sprite.name || typeof sprite.name !== 'string') {
+        return res.status(400).json({ error: 'Each sprite must have a name string' });
+      }
+      if (!sprite.data || typeof sprite.data !== 'string') {
+        return res.status(400).json({ error: 'Each sprite must have base64 encoded data' });
+      }
+    }
 
-  // Update metadata with actual image filename
-  result.metadata.meta.image = path.basename(imagePath);
+    // Process sprites
+    const processedSprites = await Promise.all(sprites.map(processSprite));
 
-  // Write files
-  await Promise.all([
-    fs.writeFile(imagePath, new Uint8Array(result.image)),
-    fs.writeFile(jsonPath, JSON.stringify(result.metadata, null, 2)),
-  ]);
+    // Generate sprite sheet
+    const result = await generateSpriteSheet(processedSprites, config);
 
-  return result;
+    // Return result
+    res.status(200).json({
+      image: result.image.toString('base64'),
+      metadata: result.metadata,
+      width: result.width,
+      height: result.height,
+    });
+  } catch (error) {
+    console.error('Sprite sheet generation error:', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Failed to generate sprite sheet',
+    });
+  }
 }
